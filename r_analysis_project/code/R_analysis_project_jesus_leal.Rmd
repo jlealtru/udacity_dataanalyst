@@ -1,0 +1,758 @@
+---
+title: "Analysis of Kickstarter projects"
+author: "Jesus Leal"
+output: html_document
+---
+
+This project is an analysis of pledges for financing submitted to [kickstater](https://www.kickstarter.com/), a crowdfunding platform where 
+entrepreneurs subtmit their ideas for funding. The dataset was obtained from 
+[Kaggle](https://www.kaggle.com/kemical/kickstarter-projects). For this analysis
+we will use libraries from the [Tidyverse](https://www.tidyverse.org/), a set of 
+packages developed primarily by Hadley Wickham.
+
+We start by loading the libraries.
+
+``````{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(ggridges)
+library(knitr)
+library(lubridate)
+```
+
+Now that we have the workding directory we can just use the relative path of the 
+GitHub repo where the data is also mantained. The next step in the analysis is
+loading the data. The readr library is quite helpful here as the original file 
+is in a zip format, but the library takes care of the heavylifting for us.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+setwd("/Users/jtrujillo/Dropbox/git")
+knitr::opts_knit$set(root.dir = "/Users/jtrujillo/Dropbox/git")
+kickstart_data<-
+  read_csv('./udacity_dataanalyst/r_analysis_project/data/ks-projects-201801.csv.zip')
+```
+
+The data set was created by user Kermical via webscrape the plattform. It is 
+composed of 15 variables and has 378K+ observations. The variables indicate the 
+name of the project, the category of the project (e.g. food, restaurants, film 
+and video, etc.), when was it launched, currency, number of backers, status of 
+the project (succesful vs failed), etc.
+
+The first variable I am interested in exploring is goal (funding requested).
+This will provide a good idea on the range of projects that are pitched in the
+plattform. We start this exploration with a histogram. To define the size of the
+bins we use one half of the standard deviation of our variable of interest.
+
+```{r message=FALSE, warning=FALSE}
+summary(kickstart_data$goal)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+histogram_goal<- ggplot(kickstart_data, aes(x=goal))+
+  geom_histogram(binwidth = 0.5*sd(kickstart_data$goal))+
+  scale_x_continuous(labels=comma)+
+  scale_y_continuous(labels=dollar_format(prefix="$"))+
+  labs(x="Total funds requested per project (local currency)",
+       y="Count of projects", title="Histogram of funds requested")+theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+histogram_goal
+
+```
+
+As we can see from the plot there a few observations with extremely large 
+values. This can be explained by the fact that the goal variable is not 
+standardized in a common currency, additionally there could be just a high
+variation on the amount of money a given project requires. Let's explore how
+the distribution looks if we used the standardized goal requested in USD.
+
+```{r message=FALSE, warning=FALSE}
+summary(kickstart_data$usd_goal_real)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+histogram_goal_usd<- ggplot(kickstart_data, aes(x=usd_goal_real))+
+  geom_histogram(binwidth =sd(kickstart_data$usd_goal_real))+
+  scale_x_continuous(labels=comma)+
+  scale_y_continuous(labels=dollar_format(prefix="$"))+
+  labs(x="Total funds requested per project (USD)",
+       y="Count of projects", title="Funds Requested in USD")+
+  theme(plot.title = element_text(hjust = 0.5))
+histogram_goal_usd
+```
+
+We still have a large number of outliers in this case we will filter everything
+that is above 1.5 times the interquartile range, defined as the difference 
+between the 75th and 25th percentiles. If we follow this approach we end up with 
+303,549 observations. This represents a loss of 19.7 percent of all the 
+observations. To mitigate this problem I adopted a more lax definition of IQR 
+and set the limit to 3.5 times the difference between the third and first 
+quartile, with this criteria we have 341,563 observations, or 90 percent of the 
+original dataset. The resulting histogram of funds requested without outliers
+is below.
+
+```{r echo=FALSE , message=FALSE, warning=FALSE}
+observations_one_half<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(usd_goal_real>1.5*(quantile(usd_goal_real,0.75)-
+                                             quantile(usd_goal_real, 0.25)),
+                        0,1))%>%filter(iqr_dummy==1)%>%
+  summarise(total=sum(iqr_dummy))
+
+observations_one_half<-observations_one_half[[1]]
+
+observations_three_half<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(usd_goal_real>3.5*(quantile(usd_goal_real,0.75)-
+                                             quantile(usd_goal_real, 0.25)),
+                        0,1))%>%filter(iqr_dummy==1)%>%
+  summarise(total=sum(iqr_dummy))
+
+observations_three_half<-observations_three_half[[1]]
+
+#plot histogram filtering the outliers using the 3.5 IQR criteria
+histogram_goal_usd_filtered<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(usd_goal_real>3.5*(quantile(usd_goal_real,0.75)-
+                                             quantile(usd_goal_real, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0)%>%
+  ggplot(., aes(x=usd_goal_real))+
+  geom_histogram(binwidth =1000)+
+  scale_x_continuous(labels=dollar_format(prefix="$"))+
+  scale_y_continuous(labels=comma)+
+  labs(x="Total funds requested per project (USD)",
+       y="Count of projects", title="Funds requested in USD (no outliers)")+ 
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+histogram_goal_usd_filtered
+```
+
+We now look at pledged funds (funds actully collected) in local currency. We 
+also provide some summary statistics using the summary command. We will try to
+assess if the funds pledge also show a high concentration on round numbers ( 
+defined as those that fall on 5k, 10k, 20k, etc.)
+
+```{r message=FALSE, warning=FALSE}
+summary(kickstart_data$pledged)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+histogram_pledged<- ggplot(kickstart_data, aes(x=pledged))+
+  geom_histogram(binwidth =sd(kickstart_data$pledged))+
+  scale_x_continuous(labels=comma)+scale_y_continuous(labels=comma)+
+  labs(x="Total funds obtained per project",
+       y="Count of projects", title="Funds collected in local currency")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+histogram_pledged
+```
+
+In the previous plot we see that there are a some outliers that make the 
+analysis hard withou any data transformation. We will see if this situation is 
+also present once we look at fund raised in USD. As in the previous case we also
+provide summary statistics with the summary commad. 
+
+```{r message=FALSE, warning=FALSE}
+summary(kickstart_data$usd_pledged_real)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+histogram_pledged_usd<- ggplot(kickstart_data, aes(x=usd_pledged_real))+
+  geom_histogram(binwidth =2*sd(kickstart_data$usd_pledged_real))+
+  scale_x_continuous(labels=dollar_format(prefix = "$"))+
+  scale_y_continuous(labels=comma)+
+  labs(x="Total funds requested per project (USD)",
+       y="Count of projects", title="Funds collected in USD")+ theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+histogram_pledged_usd
+```
+
+We notice the same situation as with total the goal variable, a high presence of
+outliers (the fact that we used USD did not make a significant difference). 
+We follow the same approach and filter values higher than 3.5 timesthe IQR. This
+leaves us with 341,526 observations. We now plot the histogram of projects by 
+funding raised with no outliers in USD.
+
+```{r echo=F, message=FALSE, warning=FALSE, echo=FALSE}
+histogram_pledged_usd_filtered_three_half<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(usd_pledged_real>3.5*(quantile(usd_pledged_real,0.75)-
+                                               quantile(usd_pledged_real, 
+                                                        0.25)),
+                        1,0))%>%filter(iqr_dummy==0)%>%
+  summarise(total=sum(iqr_dummy))
+histogram_pledged_usd_filtered_three_half<-
+  histogram_pledged_usd_filtered_three_half[[1]]
+
+histogram_pledged_usd_filtered<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(usd_pledged_real>3.5*(quantile(usd_pledged_real,0.75)-
+                                               quantile(usd_pledged_real, 
+                                                        0.25)),
+                        1,0))%>%
+  filter(iqr_dummy==0)%>%ggplot(., aes(x=usd_pledged_real))+
+  geom_histogram(binwidth =1000)+
+  scale_x_continuous(labels=dollar_format(prefix="$"))+
+  scale_y_continuous(labels=comma)+
+  labs(x="Total funds requested per project (USD)",
+       y="Count of projects", title="Funds collected in UDS (no outliers)")+ 
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+histogram_pledged_usd_filtered
+```
+
+We can see that there are a lot of projects with no funds collected and no 
+projects that collected money with round 'numbers' (5k, 10k, etc.). Let's 
+explore the distribution of projects by their status (live, canceled, etc.).
+In the next section of the analysis we will explore how status and projects
+collected correlate. 
+
+```{r echo=F, message=FALSE, warning=FALSE}
+
+status_projects_bar_chart<-kickstart_data%>%group_by(state)%>%
+  summarise(total=n())%>%
+  arrange(-total)%>%
+  ggplot(., aes(x=reorder(state,total), y=total))+geom_bar(stat='identity')+
+  coord_flip()+theme_bw()+scale_y_continuous(labels=comma)+
+  labs(x="Status of project",
+       y="Count of projects", title="Projects by status")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+status_projects_bar_chart
+
+```
+
+We can see there are a lot of projects  are failed (more than half). Let's now 
+see how the project concentration changes by category (music, film, desing, 
+etc.). This is an important step before we analyze correlations between 
+different categorical variables.
+
+```{r echo=F, message=F, warning=F}
+category_projects_bar_chart<-kickstart_data%>%group_by(main_category)%>%
+  summarise(total=n())%>%
+  arrange(-total)%>%
+  ggplot(., aes(x=reorder(main_category,total), y=total))+
+  geom_bar(stat='identity')+
+  coord_flip()+theme_bw()+scale_y_continuous(labels=comma, 
+                                             limits = c(0,70000), 
+                                             expand=c(0,0))+
+  labs(x="Category of project",
+       y="Count of projects", title="Projects by category")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+category_projects_bar_chart
+```
+
+The most common category in the dataset corresponds to projects in the category 
+film and video, followed closely by music, publishing and games. 
+
+I am also interested in exploring how long are projects online. We did not get
+this information on the original dataset but we will use the dates of when
+the projects went online (launched) and when the dealine of the projects.
+
+```{r message=F, echo=F, warning=F}
+kickstart_data<-kickstart_data%>%
+  mutate(days_online=difftime(deadline, launched, unit="days"))
+kickstart_data$days_online<-as.numeric(kickstart_data$days_online)
+histogram_days_project<-ggplot(kickstart_data, aes(x=days_online))+
+  geom_histogram(binwidth = 5)+theme_bw()+labs(x="Days online",
+       y="Count of projects", title="Projects by days online")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+histogram_days_project
+```
+
+We can see there are some outliers due to parsing of the date. We filter those 
+observations with a launch date with year equal to 1970. We repeat the same plot
+this time without the project with wrong date formatting.
+
+```{r, message=F, echo=F, warning=F}
+histogram_days_project<-kickstart_data%>%
+  filter(year(launched)>1970)%>%ggplot(., aes(x=days_online))+
+  geom_histogram(binwidth = 5)+theme_bw()+labs(x="Total days a project was up",
+       y="Count of projects", title="Days project online (no outlier)")+
+  scale_x_continuous(breaks = seq(0, 100, by = 10), expand = c(0, 0), 
+                     limits=c(0,95))+
+  scale_y_continuous(labels=comma, expand = c(0, 0), limits = c(0,210000))+
+  theme(plot.title = element_text(hjust = 0.5))
+
+histogram_days_project  
+```
+
+We can see that the most common number of days for a project to be up is 30,
+with 60 as the second most common option.
+
+The last variable I am interested in exploring is the number of backers of 
+projects and how they are distributed. In the bivariete section we will explore
+how number of backers is correlated with success of a project. I also provide
+summary statistics with the summary command.
+
+```{r, message=F,  warning=F}
+summary(kickstart_data$backers)
+```
+
+```{r, message=F, echo=F, warning=F}
+backers_hist<-ggplot(kickstart_data, aes(x=backers))+
+  geom_histogram(binwidth = 1000)+theme_bw()+labs(x="Total backers",
+       y="Count of projects", title="Projects by backers")+
+  theme(plot.title = element_text(hjust = 0.5))
+backers_hist
+```
+
+As with the other variables we see that there are several outliers in the data.
+We use the 3.5 IQR rule of thumb and plot the number of backers again.
+
+```{r, echo=F, message=F, warning=F}
+backers_hist_no<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(backers>3.5*(quantile(backers,0.75)-
+                                               quantile(backers, 0.25)),
+                        1,0))%>%
+  filter(iqr_dummy==0)%>%ggplot(., aes(x=backers))+
+  geom_histogram(binwidth =10)+
+  scale_x_continuous(labels=comma, expand = c(0,0), breaks = seq(0, 220, 
+                                                                 by = 10))+
+  scale_y_continuous(labels=comma, expand = c(0,0), limits=c(0, 200000))+
+  labs(x="Total backers per project",
+       y="Count of projects", title="Projects by backers (no outliers)")+ 
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+backers_hist_no
+```
+
+The number of backers shows a distribution similar to funds obtained, with the
+majority of projects having 0 backers.
+
+Finally I will explore where are projects located. For this analysis I will use 
+the variable country. We use a simple barchart.
+
+```{r echo=F, message=F, warning=F}
+country_projects_bar_chart<-kickstart_data%>%group_by(country)%>%
+  summarise(total=n())%>%
+  arrange(-total)%>%
+  ggplot(., aes(x=reorder(country,total), y=total))+geom_bar(stat='identity')+
+  coord_flip()+theme_bw()+scale_y_continuous(labels=comma, 
+                                             limits = c(0,310000), 
+                                             expand=c(0,0))+
+  labs(x="Country of project",
+       y="Count of projects", title="Projects by country")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+country_projects_bar_chart
+```
+
+The most common place of origin of projects is the USA followed by GB and 
+Canada.
+
+#Analysis
+
+### What is the structure of your dataset?
+
+There are 378,661 variables on this dataset measuring different aspects of 
+projects that were launched on the kickstart plattform. The most important
+variables included in the dataset are:
+
+* category: indicates the subcategory of the project. This is a character 
+variable that needs to be transformed to a factor. This has more than 50 levels 
+and can get very specific.
+
+* main_category: indicates the main category of a project. This is a character 
+variable that needs to be transformed to a factor. This has 14 levels. The most 
+common category in the project is Film & Video, followed closely by Music.
+
+* deadline and launched: These are the dates when the project were launched and
+when the project was taken down. I created a new variable using the differences
+between the two dates (days_online).
+
+* goal: Amount of money the project wants to raise in local currency. It is a 
+heavily skewed variable with some projects having a large value; the median 
+project asked for $45,454 and the maximun amount asked was $16,6361,391. There 
+is another variable that stardadizes all projects to USD (usd_goal_real). 
+
+* pledged: Amount of money the project raised in local currency. It is a 
+heavily skewed variable with some projects having a large value. There is 
+another variable that stardadizes all projects to USD (usd_goal_real).
+
+* country: This variable captures where the projects are located. This is a 
+character variable that should be consider as factor. The vast majority of 
+projects come from the US, with almost 300,000.
+
+### What is/are the main feature(s) of interest in your dataset?
+
+One of the most interesting parts of the dataset comes from the fact that the 
+majority of projects (more than 50 percent) fail. Also another interesting 
+aspect of the project is the fact that the majority of them are online for
+30 days.
+
+### What other features in the dataset do you think will help support your \
+investigation into your feature(s) of interest?
+
+I am interested in exploring the influence of days a project is online, category
+and subcategory in the amount of money and success of a project.
+
+### Did you create any new variables from existing variables in the dataset?
+
+I created a new variable to understand how long projects are live in the 
+plattform (days_online). 
+
+### Of the features you investigated, were there any unusual distributions? \
+Did you perform any operations on the data to tidy, adjust, or change the form \
+of the data? If so, why did you do this?
+
+I had to omit outliers from the dataset to better visualize the distribution of
+data. The alternative would have been to use a logarithmic transformation. This
+approach was discarded since the distribution of the data did indeed follow a 
+normal distribution. While we get information on the transformation and may use
+this transformation on a regression model it is hard to appreciate the 
+concentration of projects on a log scale.
+
+##Bivariate analysis
+
+I am also interested in exploring differences in money collected by status of
+the project (succesful vs cancelled) and by category of project (film, food, 
+etc.). So now I will explore the distribution of funding requested and funding
+obtained first by status of project and then by category. We use the same 
+criteria of filtering by 3.5 above the IQR. 
+
+The first plot corresponds to funds requested by status. We use a series
+of ridgeplots to better visualize this relationship.
+
+```{r echo=FALSE, message=FALSE, fig.width=10, fig.height=10, fig.fullwidth=T}
+funds_requested_status<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(usd_goal_real>3.5*(quantile(usd_goal_real,0.75)-
+                                               quantile(usd_goal_real, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0)%>%
+  ggplot(.,aes(x=usd_goal_real, y = state, fill=state))+
+  geom_density_ridges()+theme_bw()+
+  scale_x_continuous(labels=dollar_format(prefix = "$"), expand = c(0.01,0))+
+    scale_y_discrete(expand = c(0.01, 0))+
+  scale_fill_discrete(guide = guide_legend(reverse=TRUE))+
+  labs(x="Total funds requested by status of project",
+       y="Distribution of projects", title="Funds requested by project status")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+funds_requested_status
+  
+```
+
+The projects show a very similar distribution between status. We will explore 
+now if funding collected by status shows any difference with funds requested. 
+Again we use a ridgeplot.
+
+```{r echo=FALSE, message=FALSE, fig.width=10, fig.height=10, fig.fullwidth=T}
+funds_obtained_status<-kickstart_data%>%
+mutate(iqr_dummy=ifelse(usd_pledged_real>3.5*(quantile(usd_pledged_real,0.75)-
+                                               quantile(usd_pledged_real, 
+                                                        0.25)),
+                        1,0))%>%filter(iqr_dummy==0)%>%
+  ggplot(.,aes(x=usd_pledged_real, y = state, fill=state))+
+  geom_density_ridges()+theme_bw()+
+  scale_x_continuous(labels=dollar_format(prefix = "$"), expand = c(0.01,0))+
+    scale_y_discrete(expand = c(0.01, 0))+
+  labs(x="Total funds obtained by status of project",
+       y="Distribution of projects", 
+       title="Funds collected by status of project")+ 
+    theme_bw()+  scale_fill_discrete(guide = guide_legend(reverse=TRUE))+
+      theme(plot.title = element_text(hjust = 0.5))
+    
+
+funds_obtained_status
+```
+
+The funds collected by status of project show litte difference with the 
+exception of projects that were succesful.
+
+Let's explote differences between funding requested and project category. I will 
+use boxplots to have an easier time visualizing the distribution of funding by 
+project category. We also filter outliers using the 3.5 IRQ rule mentioned 
+previously.
+
+```{r echo=FALSE, message=FALSE, fig.width=10, fig.height=10, fig.fullwidth=TRUE}
+boxplot_goal_categories<-kickstart_data%>%
+  mutate(iqr_dummy=ifelse(usd_goal_real>3.5*(quantile(usd_goal_real,0.75)-
+                                               quantile(usd_goal_real, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0)%>%
+  ggplot(., aes(x=main_category,y=usd_goal_real))+
+                             geom_boxplot(aes(fill="#bab7b6"), 
+                                          outlier.alpha = 0.1,
+                                         outlier.colour = '#1967e5', 
+                                         fatten=0.5)+
+  geom_jitter(aes(colour="#1967e5"), 
+    alpha=0.009, width = 0.5, height = 0.1)+
+  scale_y_continuous(labels=dollar_format(prefix = "$"))+theme_bw()+
+  labs(y="Requested funds by category project", x="Project Category",
+       title="Funding requested by project category USD")+
+  scale_color_manual(values=c('#1967e5'))+guides(fill=FALSE, colour=FALSE)+
+  scale_fill_manual(values=c("#bab7b6"))+
+  stat_summary(geom = "crossbar", width=0.65, fatten=1.5, color="white", 
+               fun.data = function(x){c(y=median(x), ymin=median(x), 
+                                        ymax=median(x))})+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+boxplot_goal_categories
+```
+
+We can see that there are some differences on the amount of money a project 
+request by category. Projects on the design, food and technology have the
+highst median value.
+
+Now that we have seen the distribution by category and state of the project 
+let's see how days_online, the variable created before, and funding pledged 
+correlate.
+
+```{r echo=FALSE, message=FALSE}
+scatter_days_funding<-kickstart_data%>%
+  mutate(iqr_dummy=ifelse(usd_goal_real>3.5*(quantile(usd_goal_real,0.75)-
+                                               quantile(usd_goal_real, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0 & year(launched)>1970)%>%
+  ggplot(., aes(x=days_online,y=usd_goal_real))+
+  geom_point(alpha=0.01, color="#166cf7")+theme_bw()+
+    scale_x_continuous(expand = c(0,0), 
+                       breaks = seq(0, 150, by = 10))+
+  scale_y_continuous(labels=dollar_format(prefix = "$"))+
+  labs(y="Requested funds by category project", x="Project's day online",
+       title="Requested funds by days online USD")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+scatter_days_funding
+```
+
+We see that there is a high concentration of projects on the 30 days deadline 
+and in the 60 days deadline. There seems to be no real correlation. 
+
+Finally I want to explore the correlation between number of backers and money 
+pledged by projects. As in previous plots we filter outliers.
+
+```{r echo=FALSE, message=FALSE}
+scatter_backers_funding<-kickstart_data%>%
+  mutate(iqr_dummy=ifelse(usd_pledged_real>3.5*(quantile(usd_pledged_real,0.75)-
+                                               quantile(usd_pledged_real, 0.25)),
+                        1,0),
+         iqr_dummy_b=ifelse(backers>3.5*(quantile(backers,0.75)-
+                                               quantile(backers, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0 & iqr_dummy_b==0)%>%
+  ggplot(., aes(x=backers,y=usd_pledged_real))+
+  geom_point(alpha=0.01, color="#166cf7")+theme_bw()+
+    scale_y_continuous(labels=dollar_format(prefix = "$"), expand = c(0,0))+
+  labs(y="Secured funds by category project", x="Project's backers", 
+       title="Collected funds by number of backers USD")+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+scatter_backers_funding
+```
+
+# Bivariate Analysis
+### Talk about some of the relationships you observed in this part of the \
+investigation. How did the feature(s) of interest vary with other features in \
+the dataset?
+
+Before plotting some of the variables I was interested in understanding how 
+different projects on the plattform differ on money raised and money they wanted
+to raise. I was also interested in exploring how the money a project requested 
+may relate to its status (live, cancelled, failed, etc.) I was also interested
+in understanding if there was a clear relationship between number of backers of
+a given project and how they relate to total funding secured.
+
+Some of the relationships followed an expected pattern such as number of backers
+and secured funds. The relationship there seems pretty linear, the more backers
+more funds a project secured. 
+
+Another relationship that showed an interesing pattern is the interplay between 
+state of a project and actual funds secured. All the different categories have
+a high concentration around zero dollars raised (cancelled projects, unknown, 
+failed, etc.). The big exception is projects that actually did received funding
+where we see a more variation on the amount of money raised.
+
+### Did you observe any interesting relationships between the other features \
+(not the main feature(s) of interest)?
+
+An interesting pattern I observed was the fact that projects in the design and
+technology had the highest median value for funds requested. Given the nature
+of film projects I expected this to be the highest category. 
+
+Another interesting fact that I observed is the high concentration of funding 
+requested around 'round' numbers such as 20k, 30k, 50k, etc. This type of 
+relationship was also present in the the number of days a project was online and
+the funds requested. 
+
+### What was the strongest relationship you found?
+
+The number of backers and the secured funding was a verys strong relationship. 
+If we exclude the project with zero backers the relationship is quite clear.
+
+# Multivariate Plots Section
+
+Finally I wanted to explore the relationship between amount secured for a 
+project, category of the project, and the state of the project.
+
+```{r echo=FALSE, message=FALSE, fig.width=10, fig.height=10, fig.fullwidth=TRUE}
+boxplot_pledged_categories<-kickstart_data%>%
+  mutate(iqr_dummy=ifelse(usd_pledged_real>3.5*(quantile(usd_pledged_real,0.75)-
+                                               quantile(usd_pledged_real, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0)%>%
+  ggplot(., aes(x=main_category,y=usd_pledged_real, color=state))+
+                             #geom_boxplot(position=position_dodge(width=1.2))+
+  geom_jitter(alpha=0.2)+
+  scale_y_continuous(labels=comma)+theme_bw()+
+  labs(y="Collected funds by category project", x="Project Category", 
+       title="Funding by project category and status USD")+
+  scale_color_manual(values=c("#0066ff","#ff0000", 
+                              "#003300", "#348750", "#ed9a15", "#ff3399"))+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, hjust = 1))
+
+boxplot_pledged_categories
+```
+
+We can see that there are a lot of failed projects for all categories (red 
+dots). There are however some interesting patterns such as the relatively high
+number of projects with more than 10k in funding for film and video and music.
+
+I am also interested in exploring the relationship between secured funds 
+(pledged), number of backers, and the state of the project.
+
+```{r echo=FALSE, message=FALSE}
+scatter_backers_funding_state<-kickstart_data%>%
+  mutate(iqr_dummy=ifelse(usd_pledged_real>3.5*(quantile(usd_pledged_real,0.75)-
+                                               quantile(usd_pledged_real, 0.25)),
+                        1,0),
+         iqr_dummy_b=ifelse(backers>3.5*(quantile(backers,0.75)-
+                                               quantile(backers, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0 & iqr_dummy_b==0)%>%
+  ggplot(., aes(x=backers,y=usd_pledged_real, color=state))+
+  geom_point(alpha=0.2)+theme_bw()+
+    scale_y_continuous(labels=dollar_format(prefix = "$"), expand = c(0,0))+
+  scale_color_manual(values=c("#0066ff","#ff0000", "#f200ff", "#348750", 
+                              "#ed9a15", "#0c090c"))+ 
+  labs(y="Secured funds by category project", 
+       x="Project's backers",
+       title="Funds raised by by backers and status USD")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+scatter_backers_funding_state
+```
+
+We can see that there is a clear correlation between backers, funding and state.
+More backers a project has more funding and more likely it will be a succesful
+project. One insteresting exception seems to be projects that were canceled that
+nevertheless managed a decen amount of backers. Perhaps another combination of
+variables such as days a project was online sheds light on this phenomenon.
+
+In the next plot I explore days online, secured funding and project category.
+
+```{r echo=FALSE, message=FALSE, fig.width=10, fig.height=10, fig.fullwidth=T}
+scatter_online_funding_cat<-kickstart_data%>%
+  mutate(iqr_dummy=ifelse(usd_pledged_real>3.5*(quantile(usd_pledged_real,
+                                                         0.75)-
+                                               quantile(usd_pledged_real,
+                                                        0.25)),
+                        1,0),
+         iqr_dummy_b=ifelse(days_online>3.5*(quantile(days_online,0.75)-
+                                               quantile(days_online, 0.25)),
+                        1,0))%>%filter(iqr_dummy==0 & iqr_dummy_b==0)%>%
+  ggplot(., aes(x=days_online,y=usd_pledged_real, color=main_category))+geom_point(alpha=0.5)+theme_bw()+
+    scale_y_continuous(labels=dollar_format(prefix = "$"), expand = c(0,0))+
+  labs(y="Secured funds by category project", x="Project's backers", 
+       title="Funds raised by number of days online and project category USD")+
+    theme(plot.title = element_text(hjust = 0.5))
+
+scatter_online_funding_cat
+```
+
+The plot does not seem to provide any helpful insights on a difference between 
+days online and project category.
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the \
+investigation. Were there features that strengthened each other in terms of \
+looking at your feature(s) of interest?
+
+It seems that if a project collects more than 30 backers its chances of success
+are actually quite high; in the scatter plot of backers by funds collected by
+state of the project this relationship is pretty clear. The majority of projects
+that were succesful exhibit a linear relationship between backers and funds 
+raised.
+
+### Were there any interesting or surprising interactions between features?
+
+More than interactions there were a few surprised on level of funding raised and
+project category. Journalism projects had very few projects overall and very few
+that were succesful. Design projects also showed an interesting pattern; a high 
+number of failed projects even when they raised more than $5k. 
+
+# Final Plots and Summary
+
+### Plot One
+```{r echo=FALSE, Plot_One}
+
+scatter_backers_funding_state
+
+```
+
+### Description One
+
+The first plot that I wanted to explore sheds light on the relationship between
+backers, state of the project and secured fundings. This plot was interesting 
+since there seems to be a clear threshold of 50 backers and status of project;
+after a project hits that number seems much more likely that the status will be
+succesful. In this plot we can also see that the cancelled projects seem to have
+issues not with the number of backers but with the actual funding collected. 
+A large number of the cancelled projects seem to have 20+ backers but less than
+$5,000 in funding. 
+
+### Plot Two
+```{r echo=FALSE, fig.width=10, fig.height=10, fig.fullwidth=TRUE, Plot_Two}
+boxplot_pledged_categories
+```
+
+### Description Two
+
+In this boxplot we can see the relationship between categories of projects, 
+secured funding, and status of the project. It is interesting to see that for 
+design there seems to be a high concentration of projects that have failed even
+after getting funding levels above $5,000. To put this into perspective for 
+theater there are not many projects with that level of funding that failed.
+Another interesting relationship can be observed in the category Music
+where there seems to be a lot of succesful projects with $10,000+ in funding.
+
+### Plot Three
+```{r echo=FALSE, Plot_Three}
+funds_obtained_status
+```
+
+### Description Three
+
+In this plot we can see that for all the categories of project the most common 
+amount of resources raised is close to 0, even for live projects. We can also
+see that projects that are succesful do not exhibit this level of concentration. 
+------
+
+# Reflection
+
+> **Tip**: Here's the final step! Reflect on the exploration you performed and
+the insights you found. What were some of the struggles that you went through?
+What went well? What was surprising? Make sure you include an insight into
+future work that could be done with the dataset.
+
+The kickstarter dataset provided some interesting insights on the dynamics of 
+the crowdsourcing scene. One of the first and most interesting insights that I 
+got from this dataset is the fact that the  majority of projects fail (51 
+percent). There was another element that was quite perplexing and that is the 
+fact that a lot of projects ask for round numbers for fuding (5k, 10k, 20k, etc.
+). This is an interesting feature of the dataset that can also shed light on 
+status of the project. 
+
+The dataset had a lot of outliers for some of the key variables such as funding 
+requested, funding raised, number of backers, and days online. To properly 
+visualize and analize the data I had to filter observations that were above or 
+below 3.5 times the IQR.
+
+The vast majority of projects come from english speaking countries, with the USA
+accounting for almost 300k out of the 378k projects in the dataset. Projects 
+also exhibit a lot of variation by different categories. As mentioned  in the 
+previous section, projects in the design and journalism space exhibit a very 
+distinct pattern in terms of funding raised and status of project.
+
+A limitation of the dataset is the lack of description of the projects, number 
+of people involved as well as timeline to deliver the project. These variables 
+would have allowed us additional datacuts that could shed light on what makes a
+crowdsourced project succesful.
